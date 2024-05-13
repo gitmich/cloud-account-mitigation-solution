@@ -224,7 +224,9 @@ Resources:
                     Condition:
                         NotIpAddress:
                             aws:SourceIp: !Ref AllowIP
-            Groups: !Ref EC2Group
+            Groups: 
+              - 
+                Ref: "EC2Group"
 
 
 
