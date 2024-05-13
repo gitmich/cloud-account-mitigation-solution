@@ -1,0 +1,230 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ""
+
+Parameters:
+    EC2KeyPair:
+        Type: "AWS::EC2::KeyPair::KeyName"
+        Description: "Name of an existing EC2 KeyPair to enable SSH access to the instances"
+        Default: ""
+    S3BucketName:
+        Type: "String"
+        Description: "Name of the S3 bucket to create"
+        Default: ""
+    AllowIP:
+        Type: "String"
+        Description: "IP address to allow access to AWS Service"
+        Default: "140.115.0.0/16"
+
+Resources:
+    EC2VPC:
+        Type: "AWS::EC2::VPC"
+        Properties:
+            CidrBlock: "172.30.0.0/16"
+            EnableDnsSupport: true
+            EnableDnsHostnames: false
+            InstanceTenancy: "default"
+            Tags:
+              - 
+                Key: "Name"
+                Value: "VPC-Cloud"
+
+    EC2InternetGateway:
+        Type: "AWS::EC2::InternetGateway"
+
+    EC2VPCGatewayAttachment:
+        Type: "AWS::EC2::VPCGatewayAttachment"
+        Properties:
+            VpcId: !Ref EC2VPC
+            InternetGatewayId: !Ref EC2InternetGateway
+    
+    EC2RouteTable:
+        Type: "AWS::EC2::RouteTable"
+        Properties:
+            VpcId: !Ref EC2VPC
+
+    EC2Route:
+        Type: "AWS::EC2::Route"
+        Properties:
+            DestinationCidrBlock: "0.0.0.0/0"
+            GatewayId: !Ref EC2InternetGateway
+            RouteTableId: !Ref EC2RouteTable
+
+    EC2SecurityGroup:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "launch-wizard-4 created 2017-12-11T19:05:26.477+08:00"
+            GroupName: "launch-wizard-4"
+            VpcId: !Ref EC2VPC
+            SecurityGroupIngress: 
+              - 
+                CidrIp: "0.0.0.0/0"
+                FromPort: 22
+                IpProtocol: "tcp"
+                ToPort: 22
+            SecurityGroupEgress: 
+              - 
+                CidrIp: "0.0.0.0/0"
+                IpProtocol: "-1"
+
+    EC2SecurityGroup6:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "for web"
+            GroupName: "website"
+            VpcId: !Ref EC2VPC
+            SecurityGroupIngress: 
+              - 
+                CidrIp: "0.0.0.0/0"
+                FromPort: 80
+                IpProtocol: "tcp"
+                ToPort: 80
+              - 
+                CidrIpv6: "::/0"
+                FromPort: 80
+                IpProtocol: "tcp"
+                ToPort: 80
+              - 
+                CidrIp: "0.0.0.0/0"
+                FromPort: 443
+                IpProtocol: "tcp"
+                ToPort: 443
+              - 
+                CidrIpv6: "::/0"
+                FromPort: 443
+                IpProtocol: "tcp"
+                ToPort: 443
+            SecurityGroupEgress: 
+              - 
+                CidrIp: "0.0.0.0/0"
+                IpProtocol: "-1"
+
+    EC2Subnet:
+        Type: "AWS::EC2::Subnet"
+        Properties:
+            AvailabilityZone: !Sub "${AWS::Region}a"
+            CidrBlock: "172.30.0.0/24"
+            VpcId: !Ref EC2VPC
+            MapPublicIpOnLaunch: true
+
+    EC2Subnet3:
+        Type: "AWS::EC2::Subnet"
+        Properties:
+            AvailabilityZone: !Sub "${AWS::Region}b"
+            CidrBlock: "172.30.3.0/24"
+            VpcId: !Ref EC2VPC
+            MapPublicIpOnLaunch: true
+
+    # associate the EC2RouteTable with the EC2Subnet
+    EC2SubnetRouteTableAssociation:
+        Type: "AWS::EC2::SubnetRouteTableAssociation"
+        Properties:
+            RouteTableId: !Ref EC2RouteTable
+            SubnetId: !Ref EC2Subnet
+
+    # associate the EC2RouteTable with the EC2Subnet3
+    EC2SubnetRouteTableAssociation2:
+        Type: "AWS::EC2::SubnetRouteTableAssociation"
+        Properties:
+            RouteTableId: !Ref EC2RouteTable
+            SubnetId: !Ref EC2Subnet3
+
+    # create an EC2 instance in the EC2Subnet with public IP
+    EC2Instance:
+        Type: "AWS::EC2::Instance"
+        Properties:
+            ImageId: "ami-07caf09b362be10b8"
+            InstanceType: "t3.micro"
+            KeyName: !Ref EC2KeyPair
+            NetworkInterfaces: 
+              - 
+                AssociatePublicIpAddress: true
+                DeviceIndex: "0"
+                GroupSet: 
+                  - 
+                    Ref: "EC2SecurityGroup"
+                SubnetId: !Ref EC2Subnet
+            Tags:
+              - 
+                Key: "Name"
+                Value: "WebServer"
+    
+    # create a target group for the load balancer to route traffic to EC2Instance
+    EC2TargetGroup:
+        Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+        Properties:
+            HealthCheckIntervalSeconds: 30
+            HealthCheckPath: "/"
+            HealthCheckProtocol: "HTTP"
+            HealthCheckTimeoutSeconds: 5
+            HealthyThresholdCount: 5
+            Port: 80
+            Protocol: "HTTP"
+            TargetType: "instance"
+            UnhealthyThresholdCount: 2
+            VpcId: !Ref EC2VPC
+
+    # create a load balancer to route traffic to the EC2TargetGroup, and associate the load balancer with the EC2Subnet and EC2Subnet3
+    EC2LoadBalancer:
+        Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        Properties:
+            IpAddressType: "ipv4"
+            Name: "WebServer-LoadBalancer"
+            Scheme: "internet-facing"
+            Type: "application"
+            SecurityGroups: 
+              - 
+                Ref: "EC2SecurityGroup6"
+            Subnets: 
+              - 
+                Ref: "EC2Subnet"
+              - 
+                Ref: "EC2Subnet3"
+            Tags:
+              - 
+                Key: "Name"
+                Value: "WebServer-LoadBalancer"
+
+    # create a listener for the load balancer to route traffic to the EC2TargetGroup
+    EC2Listener:
+        Type: "AWS::ElasticLoadBalancingV2::Listener"
+        Properties:
+            DefaultActions: 
+              - 
+                TargetGroupArn: 
+                    Ref: "EC2TargetGroup"
+                Type: "forward"
+            LoadBalancerArn: 
+                Ref: "EC2LoadBalancer"
+            Port: 80
+            Protocol: "HTTP"
+
+    EC2Bucket:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: !Ref S3BucketName
+
+    # create a IAM Group
+    EC2Group:
+        Type: "AWS::IAM::Group"
+        Properties:
+            GroupName: "Group-With-White-List-IP"
+
+    # create a policies which to deny access when IP is not coming from the specified IP
+    EC2Policy:
+        Type: "AWS::IAM::Policy"
+        Properties:
+            PolicyName: "IP-allow-Policy"
+            PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - 
+                    Effect: "Deny"
+                    Action: "*"
+                    Resource: "*"
+                    Condition:
+                        NotIpAddress:
+                            aws:SourceIp: !Ref AllowIP
+            Groups: !Ref EC2Group
+
+
+
